@@ -10,9 +10,9 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// In-memory store for the code_verifier.
+// In-memory store for PKCE data.
 // For a real app, use a session store.
-let codeVerifier = null;
+let pkceStore = null;
 
 /**
  * Generates a random base64url-encoded string.
@@ -65,10 +65,15 @@ app.get('/', (req, res) => {
 app.get('/login', (req, res) => {
     console.log('--- Step 1: Initiating Authorization ---');
 
-    codeVerifier = base64URLEncode(crypto.randomBytes(32));
-    console.log('Generated Code Verifier:', codeVerifier);
+    // Generate and store the code verifier and state
+    pkceStore = {
+        codeVerifier: base64URLEncode(crypto.randomBytes(32)),
+        state: base64URLEncode(crypto.randomBytes(32))
+    };
+    console.log('Generated Code Verifier:', pkceStore.codeVerifier);
+    console.log('Generated State:', pkceStore.state);
 
-    const codeChallenge = base64URLEncode(sha256(codeVerifier));
+    const codeChallenge = base64URLEncode(sha256(pkceStore.codeVerifier));
     console.log('Generated Code Challenge:', codeChallenge);
 
     const authUrl = new url.URL(process.env.OAUTH_AUTHORIZE_URL);
@@ -76,6 +81,7 @@ app.get('/login', (req, res) => {
     authUrl.searchParams.append('client_id', process.env.OAUTH_CLIENT_ID);
     authUrl.searchParams.append('redirect_uri', process.env.REDIRECT_URI);
     authUrl.searchParams.append('scope', process.env.OAUTH_SCOPES);
+    authUrl.searchParams.append('state', pkceStore.state);
     authUrl.searchParams.append('code_challenge', codeChallenge);
     authUrl.searchParams.append('code_challenge_method', 'S256');
 
@@ -86,7 +92,21 @@ app.get('/login', (req, res) => {
 
 app.get('/callback', async (req, res) => {
     console.log('--- Step 2: Handling Redirect from Auth Server ---');
-    const { code } = req.query;
+    const { code, state } = req.query;
+
+    if (!pkceStore || !pkceStore.state) {
+        console.error('Error: No state found in storage. Please initiate login again.');
+        return res.status(400).send('Error: State missing. Please <a href="/login">try the login process again</a>.');
+    }
+
+    if (state !== pkceStore.state) {
+        console.error('Error: State mismatch.');
+        console.error('Expected:', pkceStore.state);
+        console.error('Received:', state);
+        return res.status(400).send('Error: State mismatch. CSRF attack suspected.');
+    }
+    console.log('State verification successful.');
+
 
     if (!code) {
         console.error('Error: No authorization code received in callback.');
@@ -98,12 +118,12 @@ app.get('/callback', async (req, res) => {
     console.log('-----------------------------------------------\n');
     console.log('--- Step 3: Exchanging Code for Access Token ---');
 
-    if (!codeVerifier) {
+    if (!pkceStore.codeVerifier) {
         console.error('Error: code_verifier not found. Please initiate login again.');
         res.status(400).send('Error: No code_verifier found. Please <a href="/login">try the login process again</a>.');
         return;
     }
-    console.log('Using stored Code Verifier:', codeVerifier);
+    console.log('Using stored Code Verifier:', pkceStore.codeVerifier);
 
     const params = new URLSearchParams();
     params.append('grant_type', 'authorization_code');
@@ -111,7 +131,7 @@ app.get('/callback', async (req, res) => {
     params.append('redirect_uri', process.env.REDIRECT_URI);
     params.append('client_id', process.env.OAUTH_CLIENT_ID);
     params.append('client_secret', process.env.OAUTH_CLIENT_SECRET);
-    params.append('code_verifier', codeVerifier);
+    params.append('code_verifier', pkceStore.codeVerifier);
 
     console.log('\nMaking POST request to Token URL:', process.env.OAUTH_TOKEN_URL);
     console.log('Request Body:', params.toString());
@@ -167,8 +187,8 @@ app.get('/callback', async (req, res) => {
         }
         console.error('------------------------------------\n');
     } finally {
-        // Clear the code verifier
-        codeVerifier = null;
+        // Clear the PKCE store
+        pkceStore = null;
     }
 });
 

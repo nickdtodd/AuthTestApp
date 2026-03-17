@@ -8,6 +8,7 @@ A simple Node.js application designed to debug the OAuth2 Authorization Code flo
 -   **Configurable:** All client and server details are set in a `.env` file.
 -   **Detailed Logging:** Every step, from code challenge generation to token exchange, is logged to the console.
 -   **Self-Signed Certificate Support:** Can be configured to trust self-signed SSL certificates for local development.
+-   **CSRF Protection:** Uses the `state` parameter to prevent Cross-Site Request Forgery attacks.
 -   **Isolated Test Environment:** Opens the authorization flow in a new browser window to help isolate sessions.
 
 ## Setup
